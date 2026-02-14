@@ -1,0 +1,11 @@
+[
+    {
+        "id": 1,
+        "customer_id": 16,
+        "date": "2026-02-08",
+        "quantity": 1,
+        "amount": 60,
+        "status": "Delivered",
+        "timestamp": "2026-02-08T06:03:52.285Z"
+    }
+]

@@ -1,0 +1,13 @@
+/* Minimal Index - Resets handled in App.css */
+:root {
+  font-family: 'Outfit', system-ui, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
