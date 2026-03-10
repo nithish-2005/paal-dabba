@@ -9,7 +9,14 @@ async function fetchAPI(endpoint, options = {}) {
     headers: { 'Content-Type': 'application/json' },
     ...options
   });
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) {
+    let errMsg = await res.text();
+    try {
+      const parsed = JSON.parse(errMsg);
+      if (parsed.error) errMsg = parsed.error;
+    } catch (e) { }
+    throw new Error(errMsg);
+  }
   return res.json();
 }
 
@@ -342,14 +349,17 @@ function Customers({ showNotif }) {
   const [customers, setCustomers] = useState([]);
   const [isAdding, setIsAdding] = useState(false);
   const [newCust, setNewCust] = useState({ name: '', mobile: '', area: '', default_quantity: 1 });
+  const [addError, setAddError] = useState(null);
+  const [editError, setEditError] = useState(null);
   const [editingCust, setEditingCust] = useState(null);
 
   const load = () => fetchAPI('/customers').then(setCustomers);
   useEffect(() => { load(); }, []);
 
   const addCustomer = () => {
+    setAddError(null);
     if (!/^\d{10}$/.test(newCust.mobile)) {
-      alert("Please enter a valid 10-digit mobile number.");
+      setAddError("Please enter a valid 10-digit mobile number.");
       return;
     }
 
@@ -358,9 +368,10 @@ function Customers({ showNotif }) {
         showNotif("Customer Added!");
         setIsAdding(false);
         setNewCust({ name: '', mobile: '', area: '', default_quantity: 1 });
+        setAddError(null);
         load();
       })
-      .catch(err => alert(err.message || "Failed to add customer"));
+      .catch(err => setAddError(err.message || "Failed to add customer"));
   };
 
   const updateDefault = (id, newQty) => {
@@ -387,12 +398,14 @@ function Customers({ showNotif }) {
   };
 
   const startEdit = (c) => {
+    setEditError(null);
     setEditingCust({ ...c });
   };
 
   const saveEdit = () => {
+    setEditError(null);
     if (!/^\d{10}$/.test(editingCust.mobile)) {
-      alert("Please enter a valid 10-digit mobile number.");
+      setEditError("Please enter a valid 10-digit mobile number.");
       return;
     }
 
@@ -402,21 +415,27 @@ function Customers({ showNotif }) {
     }).then(() => {
       showNotif("Info Updated!");
       setEditingCust(null);
+      setEditError(null);
       load();
     })
-      .catch(err => alert(err.message || "Failed to update"));
+      .catch(err => setEditError(err.message || "Failed to update"));
   };
 
   return (
     <div>
       <div className="flex-row" style={{ marginBottom: '1rem' }}>
         <h2>Customers</h2>
-        <button className="primary" onClick={() => setIsAdding(!isAdding)}>{isAdding ? 'Cancel' : '+ Add Customer'}</button>
+        <button className="primary" onClick={() => { setIsAdding(!isAdding); setAddError(null); }}>{isAdding ? 'Cancel' : '+ Add Customer'}</button>
       </div>
 
       {isAdding && (
-        <div className="card">
+        <div className="card fade-in">
           <h3>New Customer</h3>
+          {addError && (
+            <div style={{ padding: '0.75rem', background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', border: '1px solid rgba(239, 68, 68, 0.3)', borderRadius: '8px', marginBottom: '1rem', fontSize: '0.9rem' }}>
+              ⚠️ {addError}
+            </div>
+          )}
           <div className="grid">
             <input placeholder="Name" value={newCust.name} onChange={e => setNewCust({ ...newCust, name: e.target.value })} />
             <input
@@ -445,8 +464,13 @@ function Customers({ showNotif }) {
       )}
 
       {editingCust && (
-        <div className="card" style={{ border: '1px solid var(--primary)' }}>
+        <div className="card fade-in" style={{ border: '1px solid var(--primary)' }}>
           <h3>Edit Customer Info</h3>
+          {editError && (
+            <div style={{ padding: '0.75rem', background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', border: '1px solid rgba(239, 68, 68, 0.3)', borderRadius: '8px', marginBottom: '1rem', fontSize: '0.9rem' }}>
+              ⚠️ {editError}
+            </div>
+          )}
           <div className="grid">
             <input placeholder="Name" value={editingCust.name} onChange={e => setEditingCust({ ...editingCust, name: e.target.value })} />
             <input
@@ -464,7 +488,7 @@ function Customers({ showNotif }) {
           </div>
           <div className="flex-row" style={{ justifyContent: 'flex-start' }}>
             <button className="primary" onClick={saveEdit}>Save Changes</button>
-            <button className="secondary" onClick={() => setEditingCust(null)}>Cancel</button>
+            <button className="secondary" onClick={() => { setEditingCust(null); setEditError(null); }}>Cancel</button>
           </div>
         </div>
       )}
@@ -532,6 +556,18 @@ function DailyLog({ showNotif }) {
   const [modalType, setModalType] = useState(null);
   const [selectedItem, setSelectedItem] = useState(null);
   const [qtyInput, setQtyInput] = useState('');
+  const [filter, setFilter] = useState('all');
+  const dateInputRef = React.useRef(null);
+
+  const handleDateClick = () => {
+    if (dateInputRef.current && dateInputRef.current.showPicker) {
+      try {
+        dateInputRef.current.showPicker();
+      } catch (e) {
+        // Fallback for older browsers
+      }
+    }
+  };
 
   const load = () => {
     fetchAPI(`/deliveries?date=${date}`).then(setDeliveries);
@@ -614,11 +650,88 @@ function DailyLog({ showNotif }) {
     setQtyInput('');
   };
 
+  const totalVolume = deliveries.reduce((acc, d) => acc + (d.quantity || 0), 0);
+  const deliveredVolume = deliveries.filter(d => d.is_delivered).reduce((acc, d) => acc + (d.quantity || 0), 0);
+  const pendingVolume = deliveries.filter(d => !d.is_delivered && d.delivery_status !== 'Not Delivered').reduce((acc, d) => acc + (d.quantity || 0), 0);
+  const missedVolume = deliveries.filter(d => d.delivery_status === 'Not Delivered').reduce((acc, d) => acc + (d.quantity || 0), 0);
+
+  const filteredDeliveries = deliveries.filter(d => {
+    if (filter === 'all') return true;
+    if (filter === 'delivered') return d.is_delivered;
+    if (filter === 'pending') return !d.is_delivered && d.delivery_status !== 'Not Delivered';
+    if (filter === 'missed') return d.delivery_status === 'Not Delivered';
+    return true;
+  });
+  const changeDate = (days) => {
+    const d = new Date(date);
+    d.setDate(d.getDate() + days);
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    setDate(`${year}-${month}-${day}`);
+  };
+
   return (
     <div>
-      <div className="flex-row" style={{ marginBottom: '1rem' }}>
-        <h2>Daily Delivery Log</h2>
-        <input type="date" value={date} onChange={e => setDate(e.target.value)} style={{ width: 'auto', background: 'rgba(0,0,0,0.4)' }} />
+      <div className="flex-row" style={{ marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
+        <h2 style={{ margin: 0 }}>Daily Delivery Log</h2>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <button style={{ width: '40px', height: '40px', borderRadius: '50%', border: 'none', background: 'var(--primary)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', boxShadow: '0 4px 10px rgba(139, 92, 246, 0.3)' }} onClick={() => changeDate(-1)}>◀</button>
+          
+          <div onClick={handleDateClick} style={{ position: 'relative', background: 'rgba(255,255,255,0.05)', borderRadius: '12px', padding: '0.5rem 1.5rem', border: '1px solid rgba(255,255,255,0.1)', textAlign: 'center', cursor: 'pointer', minWidth: '160px', overflow: 'hidden' }}>
+            <div style={{ fontSize: '1.1rem', fontWeight: 600, color: '#fff', pointerEvents: 'none' }}>
+              {new Date(date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+            </div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--primary)', marginTop: '2px', fontWeight: 'bold', textTransform: 'uppercase', pointerEvents: 'none' }}>
+              {date === getTodayDate() ? 'Today' : '🗓️ Change Date'}
+            </div>
+            <input 
+              ref={dateInputRef}
+              type="date" 
+              value={date} 
+              onChange={e => setDate(e.target.value)} 
+              style={{ position: 'absolute', bottom: 0, right: 0, width: '1px', height: '1px', opacity: 0, border: 'none', padding: 0 }} 
+            />
+          </div>
+
+          <button style={{ width: '40px', height: '40px', borderRadius: '50%', border: 'none', background: 'var(--primary)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', boxShadow: '0 4px 10px rgba(139, 92, 246, 0.3)' }} onClick={() => changeDate(1)}>▶</button>
+          
+          {date !== getTodayDate() && (
+            <button className="secondary fade-in" style={{ padding: '0.5rem 1rem', borderRadius: '20px', fontSize: '0.85rem', marginLeft: '0.5rem', whiteSpace: 'nowrap' }} onClick={() => setDate(getTodayDate())}>
+              Go to Today
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="grid" style={{ marginBottom: '1rem', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '1rem' }}>
+        <div className="card" style={{ padding: '1rem' }}>
+          <h3 style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', textTransform: 'uppercase', margin: 0 }}>Total Planned (L)</h3>
+          <div className="stat-value" style={{ fontSize: '1.5rem', marginTop: '0.5rem' }}>{totalVolume}</div>
+          <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-muted)' }}>{deliveries.length} Customers</p>
+        </div>
+        <div className="card" style={{ padding: '1rem', borderTop: '4px solid #34d399' }}>
+          <h3 style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', textTransform: 'uppercase', margin: 0 }}>Delivered (L)</h3>
+          <div className="stat-value" style={{ fontSize: '1.5rem', marginTop: '0.5rem', color: '#34d399' }}>{deliveredVolume}</div>
+          <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-muted)' }}>{deliveries.filter(d => d.is_delivered).length} Customers</p>
+        </div>
+        <div className="card" style={{ padding: '1rem', borderTop: '4px solid #f87171' }}>
+          <h3 style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', textTransform: 'uppercase', margin: 0 }}>Pending (L)</h3>
+          <div className="stat-value" style={{ fontSize: '1.5rem', marginTop: '0.5rem', color: '#f87171' }}>{pendingVolume}</div>
+          <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-muted)' }}>{deliveries.filter(d => !d.is_delivered && d.delivery_status !== 'Not Delivered').length} Customers</p>
+        </div>
+        <div className="card" style={{ padding: '1rem', borderTop: '4px solid #64748b' }}>
+          <h3 style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', textTransform: 'uppercase', margin: 0 }}>Missed (L)</h3>
+          <div className="stat-value" style={{ fontSize: '1.5rem', marginTop: '0.5rem', color: '#cbd5e1' }}>{missedVolume}</div>
+          <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-muted)' }}>{deliveries.filter(d => d.delivery_status === 'Not Delivered').length} Customers</p>
+        </div>
+      </div>
+
+      <div className="flex-row" style={{ marginBottom: '1rem', gap: '0.5rem', justifyContent: 'flex-start', flexWrap: 'wrap' }}>
+        <button className={filter === 'all' ? 'primary' : 'secondary'} style={{ padding: '0.5rem 1rem', fontSize: '0.9rem', borderRadius: '20px' }} onClick={() => setFilter('all')}>All</button>
+        <button className={filter === 'delivered' ? 'primary' : 'secondary'} style={{ padding: '0.5rem 1rem', fontSize: '0.9rem', borderRadius: '20px' }} onClick={() => setFilter('delivered')}>Delivered</button>
+        <button className={filter === 'pending' ? 'primary' : 'secondary'} style={{ padding: '0.5rem 1rem', fontSize: '0.9rem', borderRadius: '20px' }} onClick={() => setFilter('pending')}>Pending</button>
+        <button className={filter === 'missed' ? 'primary' : 'secondary'} style={{ padding: '0.5rem 1rem', fontSize: '0.9rem', borderRadius: '20px' }} onClick={() => setFilter('missed')}>Missed</button>
       </div>
 
       <div className="card table-container">
@@ -632,7 +745,7 @@ function DailyLog({ showNotif }) {
             </tr>
           </thead>
           <tbody>
-            {deliveries.map(d => (
+            {filteredDeliveries.map(d => (
               <tr key={d.id}>
                 <td>
                   <div style={{ fontWeight: 600 }}>{d.name}</div>

@@ -75,7 +75,12 @@ app.post('/api/customers', (req, res) => {
 
     // Insert
     db.run("INSERT INTO customers (name, mobile, area, default_quantity) VALUES (?, ?, ?, ?)", [name, mobile, area || '', default_quantity], function (err) {
-        if (err) return res.status(500).json({ error: err.message });
+        if (err) {
+            if (err.message && err.message.includes('UNIQUE constraint failed: customers.mobile')) {
+                return res.status(400).json({ error: "This mobile number is already registered to another customer." });
+            }
+            return res.status(500).json({ error: err.message });
+        }
 
         const id = this.lastID;
         const code = generateCustomerID(id);
@@ -108,7 +113,12 @@ app.post('/api/customers/:id/update-info', (req, res) => {
     }
 
     db.run("UPDATE customers SET name = ?, mobile = ?, area = ? WHERE id = ?", [name, mobile, area || '', id], (err) => {
-        if (err) return res.status(500).json({ error: err.message });
+        if (err) {
+            if (err.message && err.message.includes('UNIQUE constraint failed: customers.mobile')) {
+                return res.status(400).json({ error: "This mobile number is already registered to another customer." });
+            }
+            return res.status(500).json({ error: err.message });
+        }
         res.json({ message: "Customer info updated" });
     });
 });
@@ -241,11 +251,21 @@ app.get('/api/deliveries', (req, res) => {
                     // To be safe with new customers added today with explicit history entry: history is best.
                 }
 
+                // Automatically mark as missed if date is in the past and no status exists
+                const todayObj = new Date();
+                const todayStr = `${todayObj.getFullYear()}-${String(todayObj.getMonth() + 1).padStart(2, '0')}-${String(todayObj.getDate()).padStart(2, '0')}`;
+                
+                let dStatus = r.delivery_status;
+                if (!dStatus && date < todayStr) {
+                    dStatus = 'Not Delivered';
+                }
+
                 // If already delivered, show that quantity. Else show expected.
                 return {
                     ...r,
-                    quantity: r.delivery_status === 'Delivered' ? r.delivered_qty : expectedQty,
-                    is_delivered: r.delivery_status === 'Delivered',
+                    quantity: dStatus === 'Delivered' ? r.delivered_qty : expectedQty,
+                    delivery_status: dStatus,
+                    is_delivered: dStatus === 'Delivered',
                     is_override: r.override_qty != null
                 };
             });
